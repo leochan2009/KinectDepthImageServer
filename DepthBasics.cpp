@@ -58,18 +58,18 @@ CDepthBasics::CDepthBasics() :
     this->localMutex = new igtl::SimpleMutexLock;
     // create heap storage for depth pixel data in RGBX format
     m_pDepthRGBX = new RGBQUAD[cDepthWidth * cDepthHeight];
-    int frameSize = cDepthWidth* cDepthHeight * 3 / 2;
+    int frameSize = 4*cDepthWidth* cDepthHeight * 3 / 2;
     m_pDepthYUV420.SetLength(frameSize);
     memset(&info, 0, sizeof(SFrameBSInfo));
     memset(&pic, 0, sizeof(SSourcePicture));
-    pic.iPicWidth = cDepthWidth;
-    pic.iPicHeight = cDepthHeight;
+    pic.iPicWidth = cDepthWidth*2;
+    pic.iPicHeight = cDepthHeight*2;
     pic.iColorFormat = videoFormatI420;
     pic.iStride[0] = pic.iPicWidth;
     pic.iStride[1] = pic.iStride[2] = pic.iPicWidth >> 1;
     pic.pData[0] = m_pDepthYUV420.data();
-    pic.pData[1] = pic.pData[0] + cDepthWidth * cDepthHeight;
-    pic.pData[2] = pic.pData[1] + (cDepthWidth * cDepthHeight >> 2);
+    pic.pData[1] = pic.pData[0] + pic.iPicWidth * pic.iPicHeight;
+    pic.pData[2] = pic.pData[1] + (pic.iPicHeight * pic.iPicHeight >> 2);
     // Initial the openigtlink server
     threaderServer = igtl::MultiThreader::New();
     glockServer = igtl::MutexLock::New();
@@ -223,12 +223,12 @@ void CDepthBasics::Update()
 
         if (SUCCEEDED(hr))
         {
-			// In order to see the full range of depth (including the less reliable far field depth)
-			// we are setting nDepthMaxDistance to the extreme potential depth threshold
-			nDepthMaxDistance = USHRT_MAX;
+			    // In order to see the full range of depth (including the less reliable far field depth)
+			    // we are setting nDepthMaxDistance to the extreme potential depth threshold
+			    //nDepthMaxDistance = USHRT_MAX;
 
-			// Note:  If you wish to filter by reliable depth distance, uncomment the following line.
-            //// hr = pDepthFrame->get_DepthMaxReliableDistance(&nDepthMaxDistance);
+			    // Note:  If you wish to filter by reliable depth distance, uncomment the following line.
+          hr = pDepthFrame->get_DepthMaxReliableDistance(&nDepthMaxDistance);
         }
 
         if (SUCCEEDED(hr))
@@ -238,7 +238,7 @@ void CDepthBasics::Update()
 
         if (SUCCEEDED(hr))
         {
-          nDepthMaxDistance = nDepthMinReliableDistance + 255;
+          //nDepthMaxDistance = nDepthMinReliableDistance + 255;
           ProcessDepth(nTime, pBuffer, nWidth, nHeight, nDepthMinReliableDistance, nDepthMaxDistance);
 
         }
@@ -444,8 +444,10 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
         // end pixel is start + width*height - 1
         const UINT16* pBufferEnd = pBuffer + (nWidth * nHeight);
         uint8_t* pDepth = m_pDepthYUV420.data();
-        while (pBuffer < pBufferEnd)
-        {
+        for(int j = 0; j < nHeight; ++j)
+        { 
+          for (int i = 0; i<nWidth; ++i)
+          {
             USHORT depth = *pBuffer;
 
             // To convert to a byte, we're discarding the most-significant
@@ -457,17 +459,45 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
             // Consider using a lookup table instead when writing production code.
             BYTE intensity = static_cast<BYTE>((depth >= nMinDepth) && (depth <= nMaxDepth) ? (depth % 256) : 0);
 
-            pRGBX->rgbRed   = intensity;
+            pRGBX->rgbRed = intensity;
             pRGBX->rgbGreen = 0;
-            pRGBX->rgbBlue  = 0;
-            *pDepth = intensity;
+            pRGBX->rgbBlue = 0;
+
+            int corresPixelPos0 = j*pic.iPicWidth + i;
+            int corresPixelPos1 = j*pic.iPicWidth + nWidth + i;
+            int corresPixelPos2 = pic.iPicWidth*nHeight + j*pic.iPicWidth + i;
+            int corresPixelPos3 = pic.iPicWidth*nHeight + j*pic.iPicWidth + nWidth + i;
+            *(pDepth + corresPixelPos0) = 0;
+            *(pDepth + corresPixelPos1) = 0;
+            *(pDepth + corresPixelPos2) = 0;
+            *(pDepth + corresPixelPos3) = 0;
+            if ((depth >= nMinDepth) && (depth <= nMaxDepth))
+            {
+              
+              if ((depth > nMinDepth) && (depth <= nMinDepth + 255))
+              {
+                *(pDepth + corresPixelPos0) = depth-nMinDepth;
+              }
+              else if ((depth > nMinDepth + 255) && (depth <= nMinDepth + 510))
+              {
+                *(pDepth + corresPixelPos1) = depth - nMinDepth - 255;
+              }
+              else if ((depth > nMinDepth + 510) && (depth <= nMinDepth + 765))
+              {
+                *(pDepth + corresPixelPos2) = depth - nMinDepth - 510;
+              }
+              else if ((depth > nMinDepth + 765) && (depth <= nMinDepth + 1020))
+              {
+                *(pDepth + corresPixelPos3) = depth - nMinDepth - 765;
+              }
+            }
             ++pRGBX;
             ++pBuffer;
-            ++pDepth;
+          }
         }
-        for (int i = 0; i < (nWidth * nHeight) / 2; i++)
+        for (int i = 0; i < (pic.iPicWidth * pic.iPicHeight) / 2; i++)
         {
-          *(pDepth + i) = 0;
+          *(pDepth + pic.iPicWidth * pic.iPicHeight + i) = 0;
         }
 
         // Draw the data with Direct2D
