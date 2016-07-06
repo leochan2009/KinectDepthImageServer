@@ -58,18 +58,30 @@ CDepthBasics::CDepthBasics() :
     this->localMutex = new igtl::SimpleMutexLock;
     // create heap storage for depth pixel data in RGBX format
     m_pDepthRGBX = new RGBQUAD[cDepthWidth * cDepthHeight];
-    int frameSize = 4*cDepthWidth* cDepthHeight * 3 / 2;
-    m_pDepthYUV420.SetLength(frameSize);
     memset(&info, 0, sizeof(SFrameBSInfo));
     memset(&pic, 0, sizeof(SSourcePicture));
-    pic.iPicWidth = cDepthWidth*2;
-    pic.iPicHeight = cDepthHeight*2;
+    _useDemux = false;
+    int frameSize;
+    if (_useDemux)
+    {
+      frameSize = 4 * cDepthWidth* cDepthHeight * 3 / 2;
+      pic.iPicWidth = cDepthWidth * 2;
+      pic.iPicHeight = cDepthHeight * 2;
+    }
+    else
+    {
+      frameSize = cDepthWidth* cDepthHeight * 3 / 2;
+      pic.iPicWidth = cDepthWidth;
+      pic.iPicHeight = cDepthHeight;
+    }
+    m_pDepthYUV420.SetLength(frameSize);
     pic.iColorFormat = videoFormatI420;
     pic.iStride[0] = pic.iPicWidth;
     pic.iStride[1] = pic.iStride[2] = pic.iPicWidth >> 1;
     pic.pData[0] = m_pDepthYUV420.data();
     pic.pData[1] = pic.pData[0] + pic.iPicWidth * pic.iPicHeight;
     pic.pData[2] = pic.pData[1] + (pic.iPicHeight * pic.iPicHeight >> 2);
+    
     // Initial the openigtlink server
     threaderServer = igtl::MultiThreader::New();
     glockServer = igtl::MutexLock::New();
@@ -80,7 +92,7 @@ CDepthBasics::CDepthBasics() :
     td_Server.transmissionFinished = true;
     td_Server.conditionVar = igtl::ConditionVariable::New();
     threaderServer->SpawnThread((igtl::ThreadFunctionType) &DepthImageServer::ServerControl, &td_Server);
-
+    
 }
   
 
@@ -462,34 +474,40 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
             pRGBX->rgbRed = intensity;
             pRGBX->rgbGreen = 0;
             pRGBX->rgbBlue = 0;
-
-            int corresPixelPos0 = j*pic.iPicWidth + i;
-            int corresPixelPos1 = j*pic.iPicWidth + nWidth + i;
-            int corresPixelPos2 = pic.iPicWidth*nHeight + j*pic.iPicWidth + i;
-            int corresPixelPos3 = pic.iPicWidth*nHeight + j*pic.iPicWidth + nWidth + i;
-            *(pDepth + corresPixelPos0) = 0;
-            *(pDepth + corresPixelPos1) = 0;
-            *(pDepth + corresPixelPos2) = 0;
-            *(pDepth + corresPixelPos3) = 0;
-            if ((depth >= nMinDepth) && (depth <= nMaxDepth))
+            if (_useDemux)
             {
-              
-              if ((depth > nMinDepth) && (depth <= nMinDepth + 255))
+              int corresPixelPos0 = j*pic.iPicWidth + i;
+              int corresPixelPos1 = j*pic.iPicWidth + nWidth + i;
+              int corresPixelPos2 = pic.iPicWidth*nHeight + j*pic.iPicWidth + i;
+              int corresPixelPos3 = pic.iPicWidth*nHeight + j*pic.iPicWidth + nWidth + i;
+              *(pDepth + corresPixelPos0) = 0;
+              *(pDepth + corresPixelPos1) = 0;
+              *(pDepth + corresPixelPos2) = 0;
+              *(pDepth + corresPixelPos3) = 0;
+              if ((depth >= nMinDepth) && (depth <= nMaxDepth))
               {
-                *(pDepth + corresPixelPos0) = depth-nMinDepth;
+
+                if ((depth > nMinDepth) && (depth <= nMinDepth + 255))
+                {
+                  *(pDepth + corresPixelPos0) = depth - nMinDepth;
+                }
+                else if ((depth > nMinDepth + 255) && (depth <= nMinDepth + 510))
+                {
+                  *(pDepth + corresPixelPos1) = depth - nMinDepth - 255;
+                }
+                else if ((depth > nMinDepth + 510) && (depth <= nMinDepth + 765))
+                {
+                  *(pDepth + corresPixelPos2) = depth - nMinDepth - 510;
+                }
+                else if ((depth > nMinDepth + 765) && (depth <= nMinDepth + 1020))
+                {
+                  *(pDepth + corresPixelPos3) = depth - nMinDepth - 765;
+                }
               }
-              else if ((depth > nMinDepth + 255) && (depth <= nMinDepth + 510))
-              {
-                *(pDepth + corresPixelPos1) = depth - nMinDepth - 255;
-              }
-              else if ((depth > nMinDepth + 510) && (depth <= nMinDepth + 765))
-              {
-                *(pDepth + corresPixelPos2) = depth - nMinDepth - 510;
-              }
-              else if ((depth > nMinDepth + 765) && (depth <= nMinDepth + 1020))
-              {
-                *(pDepth + corresPixelPos3) = depth - nMinDepth - 765;
-              }
+            }
+            else
+            {
+              *(pDepth+j*pic.iPicWidth + i) = intensity;
             }
             ++pRGBX;
             ++pBuffer;

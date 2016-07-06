@@ -116,7 +116,7 @@ namespace DepthImageServer {
   static EncodeFileParam kFileParamArray =
   {
     "res/Cisco_Absolute_Power_1280x720_30fps.yuv",
-    "dfd4666f9b90d5d77647454e2a06d546adac6a7c", CAMERA_VIDEO_REAL_TIME, 640, 480, 1.0f, SM_RASTER_SLICE, false, 1, true, false, true, 5000000, 4
+    "dfd4666f9b90d5d77647454e2a06d546adac6a7c", CAMERA_VIDEO_REAL_TIME, 512, 424, 1.0f, SM_RASTER_SLICE, false, 1, true, false, true, 5000000, 4
   };
 
   void* ServerControl(void* ptr)

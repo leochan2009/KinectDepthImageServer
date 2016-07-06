@@ -62,7 +62,7 @@ private:
     DWORD                   m_nFramesSinceUpdate;
     bool                    m_bSaveScreenshot;
 
-
+    bool _useDemux;
     // Current Kinect
     IKinectSensor*          m_pKinectSensor;
 
