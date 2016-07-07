@@ -14,6 +14,8 @@ class CDepthBasics
 {
     static const int        cDepthWidth  = 512;
     static const int        cDepthHeight = 424;
+    static const int        cColorWidth = 1920;
+    static const int        cColorHeight = 1080;
 
 public:
     /// <summary>
@@ -66,13 +68,25 @@ private:
     // Current Kinect
     IKinectSensor*          m_pKinectSensor;
 
+    // Coordinate Mapper
+    ICoordinateMapper*      m_pCoordinateMapper;
+
     // Depth reader
     IDepthFrameReader*      m_pDepthFrameReader;
 
+    // Color reader
+    IColorFrameReader*      m_pColorFrameReader;
+
+    IMultiSourceFrameReader* m_pMultiSourceReader;
+
     // Direct2D
     ImageRenderer*          m_pDrawDepth;
+    ImageRenderer*          m_pDrawColor;
     ID2D1Factory*           m_pD2DFactory;
     RGBQUAD*                m_pDepthRGBX;
+    RGBQUAD*                m_pColorRGBX;
+
+    DepthSpacePoint *m_pDepthCoordinates;
     BufferedData m_pDepthYUV420;
     SFrameBSInfo info;
     SSourcePicture pic;
@@ -103,6 +117,16 @@ private:
     /// <param name="nMaxDepth">maximum reliable depth</param>
     /// </summary>
     void                    ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nHeight, int nWidth, USHORT nMinDepth, USHORT nMaxDepth);
+
+    /// <summary>
+    /// Handle new depth data
+    /// <param name="nTime">timestamp of frame</param>
+    /// <param name="pBuffer">pointer to frame data</param>
+    /// <param name="nWidth">width (in pixels) of input image data</param>
+    /// <param name="nHeight">height (in pixels) of input image data</param>
+    /// </summary>
+    void                    ProcessColor(INT64 nTime, RGBQUAD* pBuffer, int nHeight, int nWidth);
+
 
     /// <summary>
     /// Set the status bar message

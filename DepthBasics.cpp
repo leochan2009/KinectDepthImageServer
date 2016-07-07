@@ -48,7 +48,10 @@ CDepthBasics::CDepthBasics() :
     m_pDepthFrameReader(NULL),
     m_pD2DFactory(NULL),
     m_pDrawDepth(NULL),
-    m_pDepthRGBX(NULL)
+    m_pDrawColor(NULL),
+    m_pDepthRGBX(NULL),
+    m_pColorRGBX(NULL),
+    m_pMultiSourceReader(NULL)
 {
     LARGE_INTEGER qpf = {0};
     if (QueryPerformanceFrequency(&qpf))
@@ -58,6 +61,9 @@ CDepthBasics::CDepthBasics() :
     this->localMutex = new igtl::SimpleMutexLock;
     // create heap storage for depth pixel data in RGBX format
     m_pDepthRGBX = new RGBQUAD[cDepthWidth * cDepthHeight];
+    m_pColorRGBX = new RGBQUAD[cColorWidth * cColorHeight];
+    // create heap storage for the coorinate mapping from color to depth
+    m_pDepthCoordinates = new DepthSpacePoint[cColorWidth * cColorHeight];
     memset(&info, 0, sizeof(SFrameBSInfo));
     memset(&pic, 0, sizeof(SSourcePicture));
     _useDemux = false;
@@ -108,6 +114,13 @@ CDepthBasics::~CDepthBasics()
         m_pDrawDepth = NULL;
     }
 
+    if (m_pDrawColor)
+    {
+      delete m_pDrawColor;
+      m_pDrawColor = NULL;
+    }
+
+
     if (m_pDepthRGBX)
     {
       delete[] m_pDepthRGBX;
@@ -119,6 +132,9 @@ CDepthBasics::~CDepthBasics()
 
     // done with depth frame reader
     SafeRelease(m_pDepthFrameReader);
+
+    // done with depth frame reader
+    SafeRelease(m_pColorFrameReader);
 
     // close the Kinect Sensor
     if (m_pKinectSensor)
@@ -197,9 +213,8 @@ void CDepthBasics::Update()
     }
 
     IDepthFrame* pDepthFrame = NULL;
-
+    IColorFrame* pColorFrame = NULL;
     HRESULT hr = m_pDepthFrameReader->AcquireLatestFrame(&pDepthFrame);
-
     if (SUCCEEDED(hr))
     {
         INT64 nTime = 0;
@@ -210,6 +225,12 @@ void CDepthBasics::Update()
         USHORT nDepthMaxDistance = 0;
         UINT nBufferSize = 0;
         UINT16 *pBuffer = NULL;
+
+        IFrameDescription* pFrameDescriptionColor = NULL;
+        int nWidthColor = 0;
+        int nHeightColor = 0;
+        UINT nBufferSizeColor = 0;
+        RGBQUAD *pBufferColor = NULL;
 
         hr = pDepthFrame->get_RelativeTime(&nTime);
 
@@ -252,13 +273,103 @@ void CDepthBasics::Update()
         {
           //nDepthMaxDistance = nDepthMinReliableDistance + 255;
           ProcessDepth(nTime, pBuffer, nWidth, nHeight, nDepthMinReliableDistance, nDepthMaxDistance);
+        }
+        SafeRelease(pFrameDescription);
 
+        hr = m_pColorFrameReader->AcquireLatestFrame(&pColorFrame);
+        if (SUCCEEDED(hr))
+        {
+          hr = pColorFrame->get_FrameDescription(&pFrameDescriptionColor);
         }
 
-        SafeRelease(pFrameDescription);
-    }
+        if (SUCCEEDED(hr))
+        {
+          hr = pFrameDescriptionColor->get_Width(&nWidthColor);
+        }
 
+        if (SUCCEEDED(hr))
+        {
+          hr = pFrameDescriptionColor->get_Height(&nHeightColor);
+        }
+
+        ColorImageFormat imageFormat = ColorImageFormat_None;
+        if (SUCCEEDED(hr))
+        {
+          hr = pColorFrame->get_RawColorImageFormat(&imageFormat);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+          if (imageFormat == ColorImageFormat_Bgra)
+          {
+            hr = pColorFrame->AccessRawUnderlyingBuffer(&nBufferSizeColor, reinterpret_cast<BYTE**>(&pBufferColor));
+          }
+          else if (m_pColorRGBX)
+          {
+            pBufferColor = m_pColorRGBX;
+            nBufferSizeColor = cColorWidth * cColorHeight * sizeof(RGBQUAD);
+            hr = pColorFrame->CopyConvertedFrameDataToArray(nBufferSizeColor, reinterpret_cast<BYTE*>(pBufferColor), ColorImageFormat_Bgra);
+          }
+          else
+          {
+            hr = E_FAIL;
+          }
+        }
+        
+        if (m_pCoordinateMapper &&
+          pBuffer && (nWidth == cDepthWidth) && (nHeight == cDepthHeight) &&
+          pBufferColor && (nWidthColor == cColorWidth) && (nHeightColor == cColorHeight))
+        {
+          HRESULT hr = m_pCoordinateMapper->MapColorFrameToDepthSpace(cDepthWidth * cDepthHeight, (UINT16*)pBuffer, nWidthColor * nHeightColor, m_pDepthCoordinates);
+          if (SUCCEEDED(hr))
+          {
+            // loop over output pixels
+            RGBQUAD* pSrc = new RGBQUAD();
+            for (int colorIndex = 0; colorIndex < (nWidthColor*nHeightColor); ++colorIndex)
+            {
+              // default setting source to copy from the background pixel
+              
+              DepthSpacePoint p = m_pDepthCoordinates[colorIndex];
+
+              // Values that are negative infinity means it is an invalid color to depth mapping so we
+              // skip processing for this pixel
+              if (p.X != -std::numeric_limits<float>::infinity() && p.Y != -std::numeric_limits<float>::infinity())
+              {
+                int depthX = static_cast<int>(p.X + 0.5f);
+                int depthY = static_cast<int>(p.Y + 0.5f);
+
+                if ((depthX >= 0 && depthX < nWidth) && (depthY >= 0 && depthY < nHeight))
+                {
+
+                  // set source for copy to the color pixel
+                  //pSrc = m_pColorRGBX + colorIndex;
+                  pSrc->rgbBlue = 0;
+                  pSrc->rgbGreen = 0;
+                  pSrc->rgbRed = 0;
+                  pBufferColor[colorIndex] = *pSrc;
+                }
+              }
+            }
+            pSrc = NULL;
+          }
+        }
+        if (SUCCEEDED(hr))
+        {
+          ProcessColor(nTime, pBufferColor, nWidthColor, nHeightColor);
+        }
+
+        SafeRelease(pFrameDescriptionColor);
+    }
+    if (false)
+    {
+      this->localMutex->Lock();
+      this->td_Server.transmissionFinished = false;
+      while (!this->td_Server.transmissionFinished)
+        this->td_Server.conditionVar->Wait(this->localMutex);
+      this->localMutex->Unlock();
+    }
     SafeRelease(pDepthFrame);
+    SafeRelease(pColorFrame);
 }
 
 /// <summary>
@@ -318,7 +429,9 @@ LRESULT CALLBACK CDepthBasics::DlgProc(HWND hWnd, UINT message, WPARAM wParam, L
             // Create and initialize a new Direct2D image renderer (take a look at ImageRenderer.h)
             // We'll use this to draw the data we receive from the Kinect to the screen
             m_pDrawDepth = new ImageRenderer();
+            m_pDrawColor = new ImageRenderer();
             HRESULT hr = m_pDrawDepth->Initialize(GetDlgItem(m_hWnd, IDC_VIDEOVIEW), m_pD2DFactory, cDepthWidth, cDepthHeight, cDepthWidth * sizeof(RGBQUAD)); 
+            hr = m_pDrawColor->Initialize(GetDlgItem(m_hWnd, IDC_VIDEOCOLORVIEW), m_pD2DFactory, cColorWidth, cColorHeight, cColorWidth * sizeof(RGBQUAD));
             if (FAILED(hr))
             {
                 SetStatusMessage(L"Failed to initialize the Direct2D draw device.", 10000, true);
@@ -380,7 +493,8 @@ HRESULT CDepthBasics::InitializeDefaultSensor()
     {
         // Initialize the Kinect and get the depth reader
         IDepthFrameSource* pDepthFrameSource = NULL;
-
+        IColorFrameSource* pColorFrameSource = NULL;
+        //m_pKinectSensor->OpenMultiSourceFrameReader(FrameSourceTypes_Color | FrameSourceTypes_Depth, &m_pMultiSourceReader);
         hr = m_pKinectSensor->Open();
 
         if (SUCCEEDED(hr))
@@ -390,10 +504,27 @@ HRESULT CDepthBasics::InitializeDefaultSensor()
 
         if (SUCCEEDED(hr))
         {
+            hr = m_pKinectSensor->get_ColorFrameSource(&pColorFrameSource);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+          m_pKinectSensor->get_CoordinateMapper(&m_pCoordinateMapper);
+        }
+
+        if (SUCCEEDED(hr))
+        {
             hr = pDepthFrameSource->OpenReader(&m_pDepthFrameReader);
         }
 
+        if (SUCCEEDED(hr))
+        {
+            hr = pColorFrameSource->OpenReader(&m_pColorFrameReader);
+        }
+
+
         SafeRelease(pDepthFrameSource);
+        SafeRelease(pColorFrameSource);
     }
 
     if (!m_pKinectSensor || FAILED(hr))
@@ -520,11 +651,6 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
 
         // Draw the data with Direct2D
         m_pDrawDepth->Draw(reinterpret_cast<BYTE*>(m_pDepthRGBX), cDepthWidth * cDepthHeight * sizeof(RGBQUAD));
-        this->localMutex->Lock();
-        this->td_Server.transmissionFinished = false;
-        while (!this->td_Server.transmissionFinished)
-          this->td_Server.conditionVar->Wait(this->localMutex);
-        this->localMutex->Unlock();
         if (m_bSaveScreenshot)
         {
             WCHAR szScreenshotPath[MAX_PATH];
@@ -552,6 +678,23 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
             m_bSaveScreenshot = false;
         }
     }
+}
+
+/// <summary>
+/// Handle new depth data
+/// <param name="nTime">timestamp of frame</param>
+/// <param name="pBuffer">pointer to frame data</param>
+/// <param name="nWidth">width (in pixels) of input image data</param>
+/// <param name="nHeight">height (in pixels) of input image data</param>
+/// </summary>
+void CDepthBasics::ProcessColor(INT64 nTime, RGBQUAD* pBuffer, int nWidth, int nHeight)
+{
+  // Make sure we've received valid data
+  if (pBuffer && (nWidth == cColorWidth) && (nHeight == cColorHeight))
+  {
+    // Draw the data with Direct2D
+    m_pDrawColor->Draw(reinterpret_cast<BYTE*>(pBuffer), cColorWidth * cColorHeight * sizeof(RGBQUAD));
+  }
 }
 
 /// <summary>

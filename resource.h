@@ -7,6 +7,7 @@
 #define IDC_VIDEOVIEW                   1000
 #define IDC_STATUS                      1001
 #define IDC_BUTTON_SCREENSHOT           1002
+#define IDC_VIDEOCOLORVIEW              1003
 #define IDC_CHECK3                      1005
 #define IDC_EDIT1                       1006
 #define IDC_STATIC                      -1

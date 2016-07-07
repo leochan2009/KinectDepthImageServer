@@ -300,7 +300,7 @@ namespace DepthImageServer {
             videoMsg->SetBitStreamSize(td->td_Server->info.iFrameSizeInBytes);
             videoMsg->AllocateScalars();
             videoMsg->SetScalarType(videoMsg->TYPE_UINT32);
-            videoMsg->SetEndian(igtl_is_little_endian() == true ? 2 : 1); //little endian is 2 big endian is 1
+            videoMsg->SetEndian(igtl_is_little_endian() == 1 ? 2 : 1); //little endian is 2 big endian is 1
             videoMsg->SetWidth(td->td_Server->pic.iPicWidth);
             videoMsg->SetHeight(td->td_Server->pic.iPicHeight);
             int frameSize = 0;
