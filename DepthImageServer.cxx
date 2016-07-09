@@ -46,6 +46,8 @@ namespace DepthImageServer {
     int   portNum;
     SFrameBSInfo info;
     SSourcePicture pic;
+    SFrameBSInfo info_Color;
+    SSourcePicture pic_Color;
     bool transmissionFinished;
     igtl::ConditionVariable::Pointer conditionVar;
   } ThreadDataServer;
@@ -271,8 +273,10 @@ namespace DepthImageServer {
     //       in each image transfer.
 
     ISVCEncoder* encoder_ = NULL;
+    ISVCEncoder* encoderColor_ = NULL;
     int rv = WelsCreateSVCEncoder(&encoder_);
-    if (rv == 0 && encoder_ != NULL)
+    rv += WelsCreateSVCEncoder(&encoderColor_);
+    if (rv == 0 && encoder_ != NULL && encoderColor_ != NULL)
     {
       SEncParamExt pEncParamExt;
       memset(&pEncParamExt, 0, sizeof(SEncParamExt));
@@ -281,6 +285,8 @@ namespace DepthImageServer {
       encoder_->InitializeExt(&pEncParamExt);
       int videoFormat = videoFormatI420;
       encoder_->SetOption(ENCODER_OPTION_DATAFORMAT, &videoFormat);
+      encoderColor_->InitializeExt(&pEncParamExt);
+      encoderColor_->SetOption(ENCODER_OPTION_DATAFORMAT, &videoFormat);
       while (!td->stop)
       {
         int iFrameIdx = 0;
@@ -296,7 +302,8 @@ namespace DepthImageServer {
             //---------------
             igtl::VideoMessage::Pointer videoMsg;
             videoMsg = igtl::VideoMessage::New();
-            videoMsg->SetDeviceName("Video");
+            videoMsg->SetDefaultBodyType("ColoredDepth");
+            videoMsg->SetDeviceName("DepthFrame");
             videoMsg->SetBitStreamSize(td->td_Server->info.iFrameSizeInBytes);
             videoMsg->AllocateScalars();
             videoMsg->SetScalarType(videoMsg->TYPE_UINT32);
@@ -330,6 +337,50 @@ namespace DepthImageServer {
               socket->Send(videoMsg->GetPackFragmentPointer(i), videoMsg->GetPackFragmentSize(i));
             }
             glock->Unlock();
+
+            rv = encoderColor_->EncodeFrame(&td->td_Server->pic_Color, &td->td_Server->info_Color);
+            //TestDebugCharArrayCmp(info.sLayerInfo[0].pBsBuf, info.sLayerInfo[0].pBsBuf, 200);
+            if (rv == cmResultSuccess)
+            {
+              //---------------
+              igtl::VideoMessage::Pointer videoMsg;
+              videoMsg = igtl::VideoMessage::New();
+              videoMsg->SetDefaultBodyType("ColoredDepth");
+              videoMsg->SetDeviceName("ColorFrame");
+              videoMsg->SetBitStreamSize(td->td_Server->info_Color.iFrameSizeInBytes);
+              videoMsg->AllocateScalars();
+              videoMsg->SetScalarType(videoMsg->TYPE_UINT32);
+              videoMsg->SetEndian(igtl_is_little_endian() == 1 ? 2 : 1); //little endian is 2 big endian is 1
+              videoMsg->SetWidth(td->td_Server->pic_Color.iPicWidth);
+              videoMsg->SetHeight(td->td_Server->pic_Color.iPicHeight);
+              int frameSize = 0;
+              int layerSize = 0;
+              for (int i = 0; i < td->td_Server->info_Color.iLayerNum; ++i) {
+                const SLayerBSInfo& layerInfo = td->td_Server->info_Color.sLayerInfo[i];
+                layerSize = 0;
+                for (int j = 0; j < layerInfo.iNalCount; ++j)
+                {
+                  frameSize += layerInfo.pNalLengthInByte[j];
+                  layerSize += layerInfo.pNalLengthInByte[j];
+                }
+                //TestDebugCharArrayCmp(layerInfo.pBsBuf, layerInfo.pBsBuf, layerSize<200? layerSize:200);
+                for (int i = 0; i < layerSize; i++)
+                {
+                  videoMsg->GetPackFragmentPointer(2)[frameSize - layerSize + i] = layerInfo.pBsBuf[i];
+                }
+                //fwrite(layerInfo.pBsBuf, 1, layerSize, pFpBs); // write pure bit stream into file
+              }
+              //std::cerr<<"line break"<<std::endl;
+              //TestDebugCharArrayCmp(videoMsg->GetPackFragmentPointer(2), videoMsg->GetPackFragmentPointer(1) + IGTL_VIDEO_HEADER_SIZE, 200);
+              videoMsg->Pack();
+              glock->Lock();
+
+              for (int i = 0; i < videoMsg->GetNumberOfPackFragments(); i++)
+              {
+                socket->Send(videoMsg->GetPackFragmentPointer(i), videoMsg->GetPackFragmentSize(i));
+              }
+              glock->Unlock();
+            }
             td->td_Server->transmissionFinished = true;
             td->td_Server->conditionVar->Signal();
             //igtl::Sleep(interval);

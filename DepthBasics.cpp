@@ -10,7 +10,7 @@
 #include <strsafe.h>
 #include "resource.h"
 #include "DepthBasics.h"
-
+bool Synchonize = true;
 /// <summary>
 /// Entry point for the application
 /// </summary>
@@ -66,6 +66,8 @@ CDepthBasics::CDepthBasics() :
     m_pDepthCoordinates = new DepthSpacePoint[cColorWidth * cColorHeight];
     memset(&info, 0, sizeof(SFrameBSInfo));
     memset(&pic, 0, sizeof(SSourcePicture));
+    memset(&infoColor, 0, sizeof(SFrameBSInfo));
+    memset(&picColor, 0, sizeof(SSourcePicture));
     _useDemux = false;
     int frameSize;
     if (_useDemux)
@@ -87,6 +89,16 @@ CDepthBasics::CDepthBasics() :
     pic.pData[0] = m_pDepthYUV420.data();
     pic.pData[1] = pic.pData[0] + pic.iPicWidth * pic.iPicHeight;
     pic.pData[2] = pic.pData[1] + (pic.iPicHeight * pic.iPicHeight >> 2);
+
+    picColor.iPicWidth = cDepthWidth;
+    picColor.iPicHeight = cDepthHeight;
+    m_pColorYUV420.SetLength(cDepthWidth* cDepthHeight * 3 / 2);
+    picColor.iColorFormat = videoFormatI420;
+    picColor.iStride[0] = picColor.iPicWidth;
+    picColor.iStride[1] = picColor.iStride[2] = picColor.iPicWidth >> 1;
+    picColor.pData[0] = m_pColorYUV420.data();
+    picColor.pData[1] = picColor.pData[0] + picColor.iPicWidth * picColor.iPicHeight;
+    picColor.pData[2] = picColor.pData[1] + (picColor.iPicHeight * picColor.iPicHeight >> 2);
     
     // Initial the openigtlink server
     threaderServer = igtl::MultiThreader::New();
@@ -95,6 +107,8 @@ CDepthBasics::CDepthBasics() :
     td_Server.stop = 1;
     td_Server.pic = pic;
     td_Server.info = info;
+    td_Server.pic_Color = picColor;
+    td_Server.info_Color = infoColor;
     td_Server.transmissionFinished = true;
     td_Server.conditionVar = igtl::ConditionVariable::New();
     threaderServer->SpawnThread((igtl::ThreadFunctionType) &DepthImageServer::ServerControl, &td_Server);
@@ -315,58 +329,19 @@ void CDepthBasics::Update()
             hr = E_FAIL;
           }
         }
-        
-        if (m_pCoordinateMapper &&
-          pBuffer && (nWidth == cDepthWidth) && (nHeight == cDepthHeight) &&
-          pBufferColor && (nWidthColor == cColorWidth) && (nHeightColor == cColorHeight))
-        {
-          HRESULT hr = m_pCoordinateMapper->MapColorFrameToDepthSpace(cDepthWidth * cDepthHeight, (UINT16*)pBuffer, nWidthColor * nHeightColor, m_pDepthCoordinates);
-          if (SUCCEEDED(hr))
-          {
-            // loop over output pixels
-            RGBQUAD* pSrc = new RGBQUAD();
-            for (int colorIndex = 0; colorIndex < (nWidthColor*nHeightColor); ++colorIndex)
-            {
-              // default setting source to copy from the background pixel
-              
-              DepthSpacePoint p = m_pDepthCoordinates[colorIndex];
-
-              // Values that are negative infinity means it is an invalid color to depth mapping so we
-              // skip processing for this pixel
-              if (p.X != -std::numeric_limits<float>::infinity() && p.Y != -std::numeric_limits<float>::infinity())
-              {
-                int depthX = static_cast<int>(p.X + 0.5f);
-                int depthY = static_cast<int>(p.Y + 0.5f);
-
-                if ((depthX >= 0 && depthX < nWidth) && (depthY >= 0 && depthY < nHeight))
-                {
-
-                  // set source for copy to the color pixel
-                  //pSrc = m_pColorRGBX + colorIndex;
-                  pSrc->rgbBlue = 0;
-                  pSrc->rgbGreen = 0;
-                  pSrc->rgbRed = 0;
-                  pBufferColor[colorIndex] = *pSrc;
-                }
-              }
-            }
-            pSrc = NULL;
-          }
-        }
         if (SUCCEEDED(hr))
         {
-          ProcessColor(nTime, pBufferColor, nWidthColor, nHeightColor);
+          ProcessColor(nTime, pBuffer, pBufferColor,nWidth,nHeight, nWidthColor, nHeightColor);
         }
-
+        if (Synchonize)
+        {
+          this->localMutex->Lock();
+          this->td_Server.transmissionFinished = false;
+          while (!this->td_Server.transmissionFinished)
+            this->td_Server.conditionVar->Wait(this->localMutex);
+          this->localMutex->Unlock();
+        }
         SafeRelease(pFrameDescriptionColor);
-    }
-    if (false)
-    {
-      this->localMutex->Lock();
-      this->td_Server.transmissionFinished = false;
-      while (!this->td_Server.transmissionFinished)
-        this->td_Server.conditionVar->Wait(this->localMutex);
-      this->localMutex->Unlock();
     }
     SafeRelease(pDepthFrame);
     SafeRelease(pColorFrame);
@@ -687,13 +662,69 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
 /// <param name="nWidth">width (in pixels) of input image data</param>
 /// <param name="nHeight">height (in pixels) of input image data</param>
 /// </summary>
-void CDepthBasics::ProcessColor(INT64 nTime, RGBQUAD* pBuffer, int nWidth, int nHeight)
+void CDepthBasics::ProcessColor(INT64 nTime, UINT16*pBuffer, RGBQUAD* pBufferColor, int nWidth, int nHeight, int nWidthColor, int nHeightColor)
 {
   // Make sure we've received valid data
-  if (pBuffer && (nWidth == cColorWidth) && (nHeight == cColorHeight))
+  if (m_pCoordinateMapper &&
+    pBuffer && (nWidth == cDepthWidth) && (nHeight == cDepthHeight) &&
+    pBufferColor && (nWidthColor == cColorWidth) && (nHeightColor == cColorHeight))
+  {
+    HRESULT hr = m_pCoordinateMapper->MapColorFrameToDepthSpace(cDepthWidth * cDepthHeight, (UINT16*)pBuffer, nWidthColor * nHeightColor, m_pDepthCoordinates);
+    uint8_t* RGBFrame = new uint8_t[3*cDepthWidth * cDepthHeight];
+    //std::vector<std::vector<uint8_t> >testTemp(cDepthWidth * cDepthHeight, std::vector<uint8_t>(3,0));
+    if (SUCCEEDED(hr))
+    {
+      // loop over output pixels
+      RGBQUAD* pSrc = new RGBQUAD();
+      for (int colorIndex = 0; colorIndex < (nWidthColor*nHeightColor); ++colorIndex)
+      {
+        // default setting source to copy from the background pixel
+
+        DepthSpacePoint p = m_pDepthCoordinates[colorIndex];
+
+        // Values that are negative infinity means it is an invalid color to depth mapping so we
+        // skip processing for this pixel
+        if (p.X != -std::numeric_limits<float>::infinity() && p.Y != -std::numeric_limits<float>::infinity())
+        {
+          int depthX = static_cast<int>(p.X + 0.5f);
+          int depthY = static_cast<int>(p.Y + 0.5f);
+
+         
+          if ((depthX >= 0 && depthX < nWidth) && (depthY >= 0 && depthY < nHeight))
+          {
+
+            // set source for copy to the color pixel
+            //pSrc = m_pColorRGBX + colorIndex;
+            RGBFrame[3 * (depthY*nWidth + depthX)] = (pBufferColor + colorIndex)->rgbRed;
+            RGBFrame[3 * (depthY*nWidth + depthX) + 1] = (pBufferColor + colorIndex)->rgbGreen;
+            RGBFrame[3 * (depthY*nWidth + depthX) + 2] = (pBufferColor + colorIndex)->rgbBlue;
+            pSrc->rgbBlue = 0;
+            pSrc->rgbGreen = 0;
+            pSrc->rgbRed = 0;
+            pBufferColor[colorIndex] = *pSrc;
+          }
+        }
+      }
+      pSrc = NULL;
+      Bitmap2Yuv420p_calc2(m_pColorYUV420.data(), RGBFrame, nWidth, nHeight);
+      
+      /*std::string outname = "C:/Users/leochan/Desktop/testDebug.YUV";
+      FILE* pf = fopen(outname.c_str(), "a");
+      for (int c = 0; c < nHeight; c++)
+      {
+        for (int r = 0; r < nWidth; r++)
+        {
+          fputc(m_pColorYUV420.data()[c*nWidth + r], pf);
+        }
+      }
+      fclose(pf);*/
+      delete RGBFrame;
+    }
+  }
+  if (pBufferColor && (nWidthColor == cColorWidth) && (nHeightColor == cColorHeight))
   {
     // Draw the data with Direct2D
-    m_pDrawColor->Draw(reinterpret_cast<BYTE*>(pBuffer), cColorWidth * cColorHeight * sizeof(RGBQUAD));
+    m_pDrawColor->Draw(reinterpret_cast<BYTE*>(pBufferColor), cColorWidth * cColorHeight * sizeof(RGBQUAD));
   }
 }
 

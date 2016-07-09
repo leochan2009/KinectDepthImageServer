@@ -10,6 +10,63 @@
 #include "ImageRenderer.h"
 #include "DepthImageServer.cxx"
 
+void Bitmap2Yuv420p_calc2(uint8_t *destination, uint8_t *rgb, size_t width, size_t height)
+{
+  size_t image_size = width * height;
+  size_t upos = image_size;
+  size_t vpos = upos + upos / 4;
+  size_t i = 0;
+
+  for (size_t line = 0; line < height; ++line)
+  {
+    if (!(line % 2))
+    {
+      for (size_t x = 0; x < width; x += 2)
+      {
+        uint8_t r = rgb[3 * i];
+        uint8_t g = rgb[3 * i + 1];
+        uint8_t b = rgb[3 * i + 2];
+
+        destination[i] = (0.183 * r + 0.614 * g + 0.062* b ) + 16;
+        destination[i] = (destination[i] < 16) ? 16 : destination[i];
+        destination[i] = (destination[i] > 235) ? 235 : destination[i];
+        destination[upos] = (-0.101 * r + (-0.339 * g) + 0.439 * b ) + 128;
+        destination[vpos] = (0.439 * r + (-0.339 * g) + (-0.04 * b)) + 128;
+        destination[upos] = (destination[upos] < 16) ? 16 : destination[upos];
+        destination[upos] = (destination[upos] > 240) ? 240 : destination[upos];
+        destination[vpos] = (destination[vpos] < 16) ? 16 : destination[vpos];
+        destination[vpos] = (destination[vpos] > 240) ? 240 : destination[vpos];
+        i++;
+        upos++;
+        vpos++;
+
+        r = rgb[3 * i];
+        g = rgb[3 * i + 1];
+        b = rgb[3 * i + 2];
+
+        destination[i] = (0.183 * r + 0.614 * g + 0.062* b) + 16;
+        destination[i] = (destination[i] < 16) ? 16 : destination[i];
+        destination[i] = (destination[i] > 235) ? 235 : destination[i];
+        i++;
+      }
+    }
+    else
+    {
+      for (size_t x = 0; x < width; x += 1)
+      {
+        uint8_t r = rgb[3 * i];
+        uint8_t g = rgb[3 * i + 1];
+        uint8_t b = rgb[3 * i + 2];
+
+        destination[i] = (0.183 * r + 0.614 * g + 0.062* b) + 16;
+        destination[i] = (destination[i] < 16) ? 16 : destination[i];
+        destination[i] = (destination[i] > 235) ? 235 : destination[i];
+        i++;
+      }
+    }
+  }
+};
+
 class CDepthBasics
 {
     static const int        cDepthWidth  = 512;
@@ -91,6 +148,10 @@ private:
     SFrameBSInfo info;
     SSourcePicture pic;
 
+    BufferedData m_pColorYUV420;
+    SFrameBSInfo infoColor;
+    SSourcePicture picColor;
+
     igtl::MultiThreader::Pointer threaderServer;
     igtl::MutexLock::Pointer glockServer;
     DepthImageServer::ThreadDataServer td_Server;
@@ -125,7 +186,7 @@ private:
     /// <param name="nWidth">width (in pixels) of input image data</param>
     /// <param name="nHeight">height (in pixels) of input image data</param>
     /// </summary>
-    void                    ProcessColor(INT64 nTime, RGBQUAD* pBuffer, int nHeight, int nWidth);
+    void                    ProcessColor(INT64 nTime, UINT16*pBuffer, RGBQUAD* pBufferColor, int nWidth, int nHeight, int nWidthColor, int nHeightColor);
 
 
     /// <summary>
