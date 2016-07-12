@@ -10,6 +10,45 @@
 #include "ImageRenderer.h"
 #include "DepthImageServer.cxx"
 
+void RGBDownSampling(uint8_t *destination, uint8_t *rgb, size_t width, size_t height)
+{
+  size_t i = 0;
+  for (size_t x = 0; x < height*width; x=x+2)
+  {
+    uint8_t r = rgb[3 * x];
+    uint8_t g = rgb[3 * x + 1];
+    uint8_t b = rgb[3 * x + 2];
+
+    destination[i++] = r;
+    destination[i++] = g;
+    destination[i++] = b;
+  }
+}
+
+int CheckNeighbors(uint8_t *RGBFrame, int checkIndex, int nWidth, int nHeight)
+{
+  if (RGBFrame[3* checkIndex]==0 && RGBFrame[3 * checkIndex+1]==0 && RGBFrame[3 * checkIndex+2]==0)
+  { 
+    return checkIndex;
+  }
+  else if (RGBFrame[3 * (checkIndex + 1)] == 0 && RGBFrame[3 * (checkIndex + 1) + 1] == 0 && RGBFrame[3 * (checkIndex + 1) + 2] == 0)
+  {
+    return (checkIndex+1)>=(nHeight*nWidth)?(nHeight*nWidth-1):(checkIndex + 1);
+  }
+  else if (RGBFrame[3 * (checkIndex - 1)] == 0 && RGBFrame[3 * (checkIndex - 1) + 1] == 0 && RGBFrame[3 * (checkIndex - 1) + 2] == 0)
+  {
+    return (checkIndex - 1) < 0 ? 0 : (checkIndex - 1);
+  }
+  else if (RGBFrame[3 * (checkIndex + nWidth)] == 0 && RGBFrame[3 * (checkIndex + nWidth) + 1] == 0 && RGBFrame[3 * (checkIndex + nWidth) + 2] == 0)
+  {
+    return (checkIndex + nWidth) >= (nHeight*nWidth) ? (nHeight*nWidth - 1) : (checkIndex + nWidth);
+  }
+  else if (RGBFrame[3 * (checkIndex - nWidth)] == 0 && RGBFrame[3 * (checkIndex - nWidth) + 1] == 0 && RGBFrame[3 * (checkIndex - nWidth) + 2] == 0)
+  {
+    return (checkIndex - nWidth) < 0 ? 0 : (checkIndex - nWidth);
+  }
+}
+
 void Bitmap2Yuv420p_calc2(uint8_t *destination, uint8_t *rgb, size_t width, size_t height)
 {
   size_t image_size = width * height;
@@ -27,27 +66,16 @@ void Bitmap2Yuv420p_calc2(uint8_t *destination, uint8_t *rgb, size_t width, size
         uint8_t g = rgb[3 * i + 1];
         uint8_t b = rgb[3 * i + 2];
 
-        destination[i] = (0.183 * r + 0.614 * g + 0.062* b ) + 16;
-        destination[i] = (destination[i] < 16) ? 16 : destination[i];
-        destination[i] = (destination[i] > 235) ? 235 : destination[i];
-        destination[upos] = (-0.101 * r + (-0.339 * g) + 0.439 * b ) + 128;
-        destination[vpos] = (0.439 * r + (-0.339 * g) + (-0.04 * b)) + 128;
-        destination[upos] = (destination[upos] < 16) ? 16 : destination[upos];
-        destination[upos] = (destination[upos] > 240) ? 240 : destination[upos];
-        destination[vpos] = (destination[vpos] < 16) ? 16 : destination[vpos];
-        destination[vpos] = (destination[vpos] > 240) ? 240 : destination[vpos];
-        i++;
-        upos++;
-        vpos++;
+        destination[i++] = ((66 * r + 129 * g + 25 * b) >> 8) + 16;
+
+        destination[upos++] = ((-38 * r + -74 * g + 112 * b) >> 8) + 128;
+        destination[vpos++] = ((112 * r + -94 * g + -18 * b) >> 8) + 128;
 
         r = rgb[3 * i];
         g = rgb[3 * i + 1];
         b = rgb[3 * i + 2];
 
-        destination[i] = (0.183 * r + 0.614 * g + 0.062* b) + 16;
-        destination[i] = (destination[i] < 16) ? 16 : destination[i];
-        destination[i] = (destination[i] > 235) ? 235 : destination[i];
-        i++;
+        destination[i++] = ((66 * r + 129 * g + 25 * b) >> 8) + 16;
       }
     }
     else
@@ -58,14 +86,11 @@ void Bitmap2Yuv420p_calc2(uint8_t *destination, uint8_t *rgb, size_t width, size
         uint8_t g = rgb[3 * i + 1];
         uint8_t b = rgb[3 * i + 2];
 
-        destination[i] = (0.183 * r + 0.614 * g + 0.062* b) + 16;
-        destination[i] = (destination[i] < 16) ? 16 : destination[i];
-        destination[i] = (destination[i] > 235) ? 235 : destination[i];
-        i++;
+        destination[i++] = ((66 * r + 129 * g + 25 * b) >> 8) + 16;
       }
     }
   }
-};
+}
 
 class CDepthBasics
 {
@@ -121,7 +146,6 @@ private:
     DWORD                   m_nFramesSinceUpdate;
     bool                    m_bSaveScreenshot;
 
-    bool _useDemux;
     // Current Kinect
     IKinectSensor*          m_pKinectSensor;
 

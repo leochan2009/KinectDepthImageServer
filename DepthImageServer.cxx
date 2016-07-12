@@ -35,7 +35,10 @@
 #include <math.h>
 
 #define IGTL_IMAGE_HEADER_SIZE          72
-
+bool Synchonize = true;
+bool useDemux = true;
+int DemuxMethod = 2;
+bool useCompressForRGB = false;
 namespace DepthImageServer {
   void* ThreadFunction(void* ptr);
   int   SendVideoData(igtl::Socket::Pointer& socket, igtl::VideoMessage::Pointer& videoMsg);
@@ -94,7 +97,7 @@ namespace DepthImageServer {
     pEnxParamExt->uiMaxNalSize = 1500;
     //pEnxParamExt->uiIntraPeriod = 1;
     pEnxParamExt->iNumRefFrame = AUTO_REF_PIC_COUNT;
-    if (pEncFileParam->eSliceMode != SM_SINGLE_SLICE && pEncFileParam->eSliceMode != SM_SIZELIMITED_SLICE) //SM_DYN_SLICE don't support multi-thread now
+    if (pEncFileParam->eSliceMode != SM_SINGLE_SLICE) //SM_DYN_SLICE don't support multi-thread now
       pEnxParamExt->iMultipleThreadIdc = pEncFileParam->iMultipleThreadIdc; // For Adaptive QP encoding
 
     for (int i = 0; i < pEnxParamExt->iSpatialLayerNum; i++) {
@@ -119,6 +122,11 @@ namespace DepthImageServer {
   {
     "res/Cisco_Absolute_Power_1280x720_30fps.yuv",
     "dfd4666f9b90d5d77647454e2a06d546adac6a7c", CAMERA_VIDEO_REAL_TIME, 512, 424, 1.0f, SM_RASTER_SLICE, false, 1, true, false, true, 5000000, 4
+  };
+  static EncodeFileParam kFileParamArrayDemux =
+  {
+    "res/Cisco_Absolute_Power_1280x720_30fps.yuv",
+    "dfd4666f9b90d5d77647454e2a06d546adac6a7c", CAMERA_VIDEO_REAL_TIME, 512*2, 424*2, 1.0f, SM_SIZELIMITED_SLICE, false, 1, true, false, true, 20000000, 4
   };
 
   void* ServerControl(void* ptr)
@@ -280,12 +288,30 @@ namespace DepthImageServer {
     {
       SEncParamExt pEncParamExt;
       memset(&pEncParamExt, 0, sizeof(SEncParamExt));
+      SEncParamExt pEncParamExtColor;
+      memset(&pEncParamExtColor, 0, sizeof(SEncParamExt));
       //kFileParamArray.iWidth =
-      EncFileParamToParamExt(&kFileParamArray, &pEncParamExt);
+      if(useDemux)
+      { 
+        if (DemuxMethod == 1)
+        {
+          EncFileParamToParamExt(&kFileParamArrayDemux, &pEncParamExt);
+        }
+        else if( DemuxMethod == 2)
+        {
+          EncFileParamToParamExt(&kFileParamArray, &pEncParamExt);
+        }
+      }
+      else
+      {
+        EncFileParamToParamExt(&kFileParamArray, &pEncParamExt);
+      }
       encoder_->InitializeExt(&pEncParamExt);
       int videoFormat = videoFormatI420;
       encoder_->SetOption(ENCODER_OPTION_DATAFORMAT, &videoFormat);
-      encoderColor_->InitializeExt(&pEncParamExt);
+
+      EncFileParamToParamExt(&kFileParamArray, &pEncParamExtColor);
+      encoderColor_->InitializeExt(&pEncParamExtColor);
       encoderColor_->SetOption(ENCODER_OPTION_DATAFORMAT, &videoFormat);
       while (!td->stop)
       {
@@ -295,10 +321,10 @@ namespace DepthImageServer {
           td->td_Server->pic.uiTimeStamp = (long long)(iFrameIdx * (1000 / pEncParamExt.fMaxFrameRate));
           iFrameIdx++;
           //TestDebugCharArrayCmp(pic.pData[0], pic.pData[0], 200);
-          int rv = encoder_->EncodeFrame(&td->td_Server->pic, &td->td_Server->info);
-          //TestDebugCharArrayCmp(info.sLayerInfo[0].pBsBuf, info.sLayerInfo[0].pBsBuf, 200);
-          if (rv == cmResultSuccess)
+          if (DemuxMethod == 1)
           {
+            int rv = encoder_->EncodeFrame(&td->td_Server->pic, &td->td_Server->info);
+            //TestDebugCharArrayCmp(info.sLayerInfo[0].pBsBuf, info.sLayerInfo[0].pBsBuf, 200);
             //---------------
             igtl::VideoMessage::Pointer videoMsg;
             videoMsg = igtl::VideoMessage::New();
@@ -337,7 +363,34 @@ namespace DepthImageServer {
               socket->Send(videoMsg->GetPackFragmentPointer(i), videoMsg->GetPackFragmentSize(i));
             }
             glock->Unlock();
-
+          }
+          else if (DemuxMethod == 2)
+          {
+            std::string frameNames[2] = { "DepthFrame", "DepthIndex"};
+            for (int iMessage = 0; iMessage < 2; iMessage++)
+            {
+              igtl::VideoMessage::Pointer videoMsg;
+              videoMsg = igtl::VideoMessage::New();
+              videoMsg->SetDefaultBodyType("ColoredDepth");
+              videoMsg->SetDeviceName(frameNames[iMessage]);
+              videoMsg->SetBitStreamSize(pEncParamExt.iPicWidth*pEncParamExt.iPicHeight);
+              videoMsg->AllocateScalars();
+              videoMsg->SetScalarType(videoMsg->TYPE_UINT32);
+              videoMsg->SetEndian(igtl_is_little_endian() == 1 ? 2 : 1); //little endian is 2 big endian is 1
+              videoMsg->SetWidth(td->td_Server->pic.iPicWidth);
+              videoMsg->SetHeight(td->td_Server->pic.iPicHeight);
+              memcpy(videoMsg->GetPackFragmentPointer(2), td->td_Server->pic.pData[0]+ iMessage*pEncParamExt.iPicWidth*pEncParamExt.iPicHeight, pEncParamExt.iPicWidth*pEncParamExt.iPicHeight);
+              videoMsg->Pack();
+              glock->Lock();
+              for (int i = 0; i < videoMsg->GetNumberOfPackFragments(); i++)
+              {
+                socket->Send(videoMsg->GetPackFragmentPointer(i), videoMsg->GetPackFragmentSize(i));
+              }
+              glock->Unlock();
+            }
+          }
+          if (useCompressForRGB)
+          {
             rv = encoderColor_->EncodeFrame(&td->td_Server->pic_Color, &td->td_Server->info_Color);
             //TestDebugCharArrayCmp(info.sLayerInfo[0].pBsBuf, info.sLayerInfo[0].pBsBuf, 200);
             if (rv == cmResultSuccess)
@@ -381,10 +434,32 @@ namespace DepthImageServer {
               }
               glock->Unlock();
             }
-            td->td_Server->transmissionFinished = true;
-            td->td_Server->conditionVar->Signal();
-            //igtl::Sleep(interval);
           }
+          else
+          {
+            igtl::VideoMessage::Pointer videoMsg;
+            videoMsg = igtl::VideoMessage::New();
+            videoMsg->SetDefaultBodyType("ColoredDepth");
+            videoMsg->SetDeviceName("ColorFrame");
+            videoMsg->SetBitStreamSize(pEncParamExtColor.iPicWidth*pEncParamExtColor.iPicHeight * 3);
+            videoMsg->AllocateScalars();
+            videoMsg->SetScalarType(videoMsg->TYPE_UINT32);
+            videoMsg->SetEndian(igtl_is_little_endian() == 1 ? 2 : 1); //little endian is 2 big endian is 1
+            videoMsg->SetWidth(td->td_Server->pic_Color.iPicWidth);
+            videoMsg->SetHeight(td->td_Server->pic_Color.iPicHeight);
+            memcpy(videoMsg->GetPackFragmentPointer(2), td->td_Server->pic_Color.pData[0], pEncParamExtColor.iPicWidth*pEncParamExtColor.iPicHeight * 3);
+            videoMsg->Pack();
+            glock->Lock();
+            for (int i = 0; i < videoMsg->GetNumberOfPackFragments(); i++)
+            {
+              socket->Send(videoMsg->GetPackFragmentPointer(i), videoMsg->GetPackFragmentSize(i));
+            }
+            glock->Unlock();
+            igtl::Sleep(interval);
+          }
+          td->td_Server->transmissionFinished = true;
+          td->td_Server->conditionVar->Signal();
+          //igtl::Sleep(interval);
         }
         //------------------------------------------------------------
         // Loop
