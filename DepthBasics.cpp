@@ -705,6 +705,7 @@ void CDepthBasics::ProcessColor(INT64 nTime, UINT16*pBuffer, RGBQUAD* pBufferCol
     {
       // loop over output pixels
       RGBQUAD* pSrc = new RGBQUAD();
+      int validPoint = 0;
       for (int colorIndex = 0; colorIndex < (nWidthColor*nHeightColor); ++colorIndex)
       {
         // default setting source to copy from the background pixel
@@ -721,6 +722,7 @@ void CDepthBasics::ProcessColor(INT64 nTime, UINT16*pBuffer, RGBQUAD* pBufferCol
          
           if ((depthX >= 0 && depthX < nWidth) && (depthY >= 0 && depthY < nHeight))
           {
+            validPoint++;
             int fillIndex = CheckNeighbors(RGBFrame, depthY*nWidth + depthX, nWidth,nHeight);
             // set source for copy to the color pixel
             //pSrc = m_pColorRGBX + colorIndex;

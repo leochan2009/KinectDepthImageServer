@@ -388,6 +388,7 @@ namespace DepthImageServer {
               }
               glock->Unlock();
             }
+
           }
           if (useCompressForRGB)
           {
