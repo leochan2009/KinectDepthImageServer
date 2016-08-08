@@ -49,6 +49,8 @@ namespace DepthImageServer {
     int   portNum;
     SFrameBSInfo info;
     SSourcePicture pic;
+    SFrameBSInfo info_Index;
+    SSourcePicture pic_Index;
     SFrameBSInfo info_Color;
     SSourcePicture pic_Color;
     bool transmissionFinished;
@@ -281,23 +283,27 @@ namespace DepthImageServer {
     //       in each image transfer.
 
     ISVCEncoder* encoder_ = NULL;
+    ISVCEncoder* encoderIndex_ = NULL;
     ISVCEncoder* encoderColor_ = NULL;
     int rv = WelsCreateSVCEncoder(&encoder_);
+    rv += WelsCreateSVCEncoder(&encoderIndex_);
     rv += WelsCreateSVCEncoder(&encoderColor_);
-    if (rv == 0 && encoder_ != NULL && encoderColor_ != NULL)
+    SSourcePicture pictures[2] = {td->td_Server->pic, td->td_Server->pic_Index};
+    SFrameBSInfo infos[2] = { td->td_Server->info, td->td_Server->info_Index };
+    if (rv == 0 && encoder_ != NULL &&  encoderIndex_ != NULL && encoderColor_ != NULL)
     {
+      ISVCEncoder* encoders[2] = { encoder_ , encoderIndex_ };
       SEncParamExt pEncParamExt;
       memset(&pEncParamExt, 0, sizeof(SEncParamExt));
       SEncParamExt pEncParamExtColor;
       memset(&pEncParamExtColor, 0, sizeof(SEncParamExt));
-      //kFileParamArray.iWidth =
       if(useDemux)
       { 
         if (DemuxMethod == 1)
         {
           EncFileParamToParamExt(&kFileParamArrayDemux, &pEncParamExt);
         }
-        else if( DemuxMethod == 2)
+        else if( DemuxMethod == 2 || DemuxMethod == 3)
         {
           EncFileParamToParamExt(&kFileParamArray, &pEncParamExt);
         }
@@ -309,7 +315,8 @@ namespace DepthImageServer {
       encoder_->InitializeExt(&pEncParamExt);
       int videoFormat = videoFormatI420;
       encoder_->SetOption(ENCODER_OPTION_DATAFORMAT, &videoFormat);
-
+      encoderIndex_->InitializeExt(&pEncParamExt);
+      encoderIndex_->SetOption(ENCODER_OPTION_DATAFORMAT, &videoFormat);
       EncFileParamToParamExt(&kFileParamArray, &pEncParamExtColor);
       encoderColor_->InitializeExt(&pEncParamExtColor);
       encoderColor_->SetOption(ENCODER_OPTION_DATAFORMAT, &videoFormat);
@@ -388,7 +395,53 @@ namespace DepthImageServer {
               }
               glock->Unlock();
             }
+          }
+          else if (DemuxMethod == 3)
+          {
+            std::string frameNames[2] = { "DepthFrame", "DepthIndex" };
+            for (int iMessage = 0; iMessage < 2; iMessage++)
+            {
+              int rv = encoders[iMessage]->EncodeFrame(&(pictures[iMessage]), &(infos[iMessage]));
+              //TestDebugCharArrayCmp(info.sLayerInfo[0].pBsBuf, info.sLayerInfo[0].pBsBuf, 200);
+              //---------------
+              igtl::VideoMessage::Pointer videoMsg;
+              videoMsg = igtl::VideoMessage::New();
+              videoMsg->SetDefaultBodyType("ColoredDepth");
+              videoMsg->SetDeviceName(frameNames[iMessage]);
+              videoMsg->SetBitStreamSize(infos[iMessage].iFrameSizeInBytes);
+              videoMsg->AllocateScalars();
+              videoMsg->SetScalarType(videoMsg->TYPE_UINT32);
+              videoMsg->SetEndian(igtl_is_little_endian() == 1 ? 2 : 1); //little endian is 2 big endian is 1
+              videoMsg->SetWidth(pictures[iMessage].iPicWidth);
+              videoMsg->SetHeight(pictures[iMessage].iPicHeight);
+              int frameSize = 0;
+              int layerSize = 0;
+              for (int i = 0; i < infos[iMessage].iLayerNum; ++i) {
+                const SLayerBSInfo& layerInfo = infos[iMessage].sLayerInfo[i];
+                layerSize = 0;
+                for (int j = 0; j < layerInfo.iNalCount; ++j)
+                {
+                  frameSize += layerInfo.pNalLengthInByte[j];
+                  layerSize += layerInfo.pNalLengthInByte[j];
+                }
+                //TestDebugCharArrayCmp(layerInfo.pBsBuf, layerInfo.pBsBuf, layerSize<200? layerSize:200);
+                for (int i = 0; i < layerSize; i++)
+                {
+                  videoMsg->GetPackFragmentPointer(2)[frameSize - layerSize + i] = layerInfo.pBsBuf[i];
+                }
+                //fwrite(layerInfo.pBsBuf, 1, layerSize, pFpBs); // write pure bit stream into file
+              }
+              //std::cerr<<"line break"<<std::endl;
+              //TestDebugCharArrayCmp(videoMsg->GetPackFragmentPointer(2), videoMsg->GetPackFragmentPointer(1) + IGTL_VIDEO_HEADER_SIZE, 200);
+              videoMsg->Pack();
+              glock->Lock();
 
+              for (int i = 0; i < videoMsg->GetNumberOfPackFragments(); i++)
+              {
+                socket->Send(videoMsg->GetPackFragmentPointer(i), videoMsg->GetPackFragmentSize(i));
+              }
+              glock->Unlock();
+            }
           }
           if (useCompressForRGB)
           {

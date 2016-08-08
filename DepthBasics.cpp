@@ -66,6 +66,8 @@ CDepthBasics::CDepthBasics() :
     m_pDepthCoordinates = new DepthSpacePoint[cColorWidth * cColorHeight];
     memset(&info, 0, sizeof(SFrameBSInfo));
     memset(&pic, 0, sizeof(SSourcePicture));
+    memset(&infoIndex, 0, sizeof(SFrameBSInfo));
+    memset(&picIndex, 0, sizeof(SSourcePicture));
     memset(&infoColor, 0, sizeof(SFrameBSInfo));
     memset(&picColor, 0, sizeof(SSourcePicture));
     int frameSize;
@@ -83,6 +85,14 @@ CDepthBasics::CDepthBasics() :
         pic.iPicWidth = cDepthWidth;
         pic.iPicHeight = cDepthHeight;
       }
+      else if (DemuxMethod == 3)
+      {
+        frameSize = cDepthWidth* cDepthHeight * 3 / 2;
+        pic.iPicWidth = cDepthWidth;
+        pic.iPicHeight = cDepthHeight;
+        picIndex.iPicWidth = cDepthWidth;
+        picIndex.iPicHeight = cDepthHeight;
+      }
     }
     else
     {
@@ -97,6 +107,13 @@ CDepthBasics::CDepthBasics() :
     pic.pData[0] = m_pDepthYUV420.data();
     pic.pData[1] = pic.pData[0] + pic.iPicWidth * pic.iPicHeight;
     pic.pData[2] = pic.pData[1] + (pic.iPicHeight * pic.iPicHeight >> 2);
+    m_pDepthIndexYUV420.SetLength(frameSize);
+    picIndex.iColorFormat = videoFormatI420;
+    picIndex.iStride[0] = picIndex.iPicWidth;
+    picIndex.iStride[1] = picIndex.iStride[2] = picIndex.iPicWidth >> 1;
+    picIndex.pData[0] = m_pDepthIndexYUV420.data();
+    picIndex.pData[1] = picIndex.pData[0] + picIndex.iPicWidth * picIndex.iPicHeight;
+    pic.pData[2] = picIndex.pData[1] + (picIndex.iPicHeight * picIndex.iPicHeight >> 2);
 
     picColor.iPicWidth = cDepthWidth;
     picColor.iPicHeight = cDepthHeight;
@@ -122,6 +139,8 @@ CDepthBasics::CDepthBasics() :
     td_Server.stop = 1;
     td_Server.pic = pic;
     td_Server.info = info;
+    td_Server.pic_Index = picIndex;
+    td_Server.info_Index = infoIndex;
     td_Server.pic_Color = picColor;
     td_Server.info_Color = infoColor;
     td_Server.transmissionFinished = true;
@@ -577,6 +596,7 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
         // end pixel is start + width*height - 1
         const UINT16* pBufferEnd = pBuffer + (nWidth * nHeight);
         uint8_t* pDepth = m_pDepthYUV420.data();
+        uint8_t* pDepthIndex = m_pDepthIndexYUV420.data();
         for(int j = 0; j < nHeight; ++j)
         { 
           for (int i = 0; i<nWidth; ++i)
@@ -637,6 +657,16 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
                   *(pDepth + j*pic.iPicWidth + i + pic.iPicWidth*pic.iPicHeight) = (depth- nMinDepth)/256+1;
                 }
               }
+              else if (DemuxMethod == 3)
+              {
+                *(pDepth + j*pic.iPicWidth + i) = 0;
+                *(pDepthIndex + j*pic.iPicWidth + i)= 0;
+                if ((depth >= nMinDepth) && (depth <= nMaxDepth))
+                {
+                  *(pDepth + j*pic.iPicWidth + i) = intensity;
+                  *(pDepthIndex + j*pic.iPicWidth + i) = (depth - nMinDepth) / 256 + 1;
+                }
+              }
             }
             else
             {
@@ -646,11 +676,18 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
             ++pBuffer;
           }
         }
-        if ((useDemux == false) || ((useDemux == true) && DemuxMethod == 1))
+        if ((useDemux == true) && (DemuxMethod == 2))
+        {
+        }
+        else
         {
           for (int i = 0; i < (pic.iPicWidth * pic.iPicHeight) / 2; i++)
           {
             *(pDepth + pic.iPicWidth * pic.iPicHeight + i) = 0;
+          }
+          for (int i = 0; i < (picIndex.iPicWidth * picIndex.iPicHeight) / 2; i++)
+          {
+            *(pDepthIndex + picIndex.iPicWidth * picIndex.iPicHeight + i) = 0;
           }
         }
         // Draw the data with Direct2D
@@ -726,15 +763,17 @@ void CDepthBasics::ProcessColor(INT64 nTime, UINT16*pBuffer, RGBQUAD* pBufferCol
             int fillIndex = CheckNeighbors(RGBFrame, depthY*nWidth + depthX, nWidth,nHeight);
             // set source for copy to the color pixel
             //pSrc = m_pColorRGBX + colorIndex;
-            RGBFrame[3 *fillIndex] = (pBufferColor + colorIndex)->rgbRed;
-            RGBFrame[3 *fillIndex + 1] = (pBufferColor + colorIndex)->rgbGreen;
-            RGBFrame[3 *fillIndex + 2] = (pBufferColor + colorIndex)->rgbBlue;
-            m_pDepthRGBX[fillIndex] = *(pBufferColor + colorIndex);
-            pSrc->rgbBlue = 0;
-            pSrc->rgbGreen = 0;
-            pSrc->rgbRed = 0;
-            pBufferColor[colorIndex] = *pSrc;
-            
+            if (fillIndex >= 0)
+            {
+              RGBFrame[3 * fillIndex] = (pBufferColor + colorIndex)->rgbRed;
+              RGBFrame[3 * fillIndex + 1] = (pBufferColor + colorIndex)->rgbGreen;
+              RGBFrame[3 * fillIndex + 2] = (pBufferColor + colorIndex)->rgbBlue;
+              m_pDepthRGBX[fillIndex] = *(pBufferColor + colorIndex);
+              pSrc->rgbBlue = 0;
+              pSrc->rgbGreen = 0;
+              pSrc->rgbRed = 0;
+              pBufferColor[colorIndex] = *pSrc;
+            }
           }
         }
       }

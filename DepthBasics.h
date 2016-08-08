@@ -47,6 +47,10 @@ int CheckNeighbors(uint8_t *RGBFrame, int checkIndex, int nWidth, int nHeight)
   {
     return (checkIndex - nWidth) < 0 ? 0 : (checkIndex - nWidth);
   }
+  else
+  {
+    return -1;
+  }
 }
 
 void Bitmap2Yuv420p_calc2(uint8_t *destination, uint8_t *rgb, size_t width, size_t height)
@@ -171,6 +175,9 @@ private:
     BufferedData m_pDepthYUV420;
     SFrameBSInfo info;
     SSourcePicture pic;
+    BufferedData m_pDepthIndexYUV420;
+    SFrameBSInfo infoIndex;
+    SSourcePicture picIndex;
 
     BufferedData m_pColorYUV420;
     SFrameBSInfo infoColor;
