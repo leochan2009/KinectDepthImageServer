@@ -37,8 +37,8 @@
 #define IGTL_IMAGE_HEADER_SIZE          72
 bool Synchonize = true;
 bool useDemux = true;
-int DemuxMethod = 2;
-bool useCompressForRGB = false;
+int DemuxMethod = 3;
+bool useCompressForRGB = true;
 namespace DepthImageServer {
   void* ThreadFunction(void* ptr);
   int   SendVideoData(igtl::Socket::Pointer& socket, igtl::VideoMessage::Pointer& videoMsg);
@@ -101,8 +101,12 @@ namespace DepthImageServer {
     pEnxParamExt->iNumRefFrame = AUTO_REF_PIC_COUNT;
     if (pEncFileParam->eSliceMode != SM_SINGLE_SLICE) //SM_DYN_SLICE don't support multi-thread now
       pEnxParamExt->iMultipleThreadIdc = pEncFileParam->iMultipleThreadIdc; // For Adaptive QP encoding
-
+    pEnxParamExt->iMaxQp = 0;
+    pEnxParamExt->iMinQp = 0;
+    pEnxParamExt->iRCMode = RC_OFF_MODE;
+    pEnxParamExt->bEnableAdaptiveQuant = false;
     for (int i = 0; i < pEnxParamExt->iSpatialLayerNum; i++) {
+      pEnxParamExt->sSpatialLayers[i].bFullRange = 1;
       pEnxParamExt->sSpatialLayers[i].iVideoWidth = pEncFileParam->iWidth;
       pEnxParamExt->sSpatialLayers[i].iVideoHeight = pEncFileParam->iHeight;
       pEnxParamExt->sSpatialLayers[i].fFrameRate = pEncFileParam->fFrameRate;
@@ -513,7 +517,6 @@ namespace DepthImageServer {
           }
           td->td_Server->transmissionFinished = true;
           td->td_Server->conditionVar->Signal();
-          //igtl::Sleep(interval);
         }
         //------------------------------------------------------------
         // Loop

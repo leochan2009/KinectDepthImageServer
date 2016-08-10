@@ -113,7 +113,7 @@ CDepthBasics::CDepthBasics() :
     picIndex.iStride[1] = picIndex.iStride[2] = picIndex.iPicWidth >> 1;
     picIndex.pData[0] = m_pDepthIndexYUV420.data();
     picIndex.pData[1] = picIndex.pData[0] + picIndex.iPicWidth * picIndex.iPicHeight;
-    pic.pData[2] = picIndex.pData[1] + (picIndex.iPicHeight * picIndex.iPicHeight >> 2);
+    picIndex.pData[2] = picIndex.pData[1] + (picIndex.iPicHeight * picIndex.iPicHeight >> 2);
 
     picColor.iPicWidth = cDepthWidth;
     picColor.iPicHeight = cDepthHeight;
@@ -664,7 +664,7 @@ void CDepthBasics::ProcessDepth(INT64 nTime, const UINT16* pBuffer, int nWidth, 
                 if ((depth >= nMinDepth) && (depth <= nMaxDepth))
                 {
                   *(pDepth + j*pic.iPicWidth + i) = intensity;
-                  *(pDepthIndex + j*pic.iPicWidth + i) = (depth - nMinDepth) / 256 + 1;
+                  *(pDepthIndex + j*pic.iPicWidth + i) = (depth - nMinDepth) / 256*16 + 16;
                 }
               }
             }
